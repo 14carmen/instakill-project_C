@@ -29,3 +29,9 @@ pytest
 W1 Repo+API → W3 CRUD+DB → W4 Feed v0 → W7 Baseline+eval plan → W9 ML+pretrained feature → W11 Profile+optimize → W13 Feature freeze+E2E → W14 Red-team+Demo Day.
 
 At the end of each week: a demonstrable commit/tag.
+
+
+## Semantic Search Index
+The in-memory semantic search index is built at application startup using FastAPI's `lifespan` event (in `app/main.py`). It loads all existing posts from the SQLite database, encodes them using `sentence-transformers`, and stores the embeddings in memory (`app/search_index.py`). 
+
+To handle new posts in the future, the `POST /posts` endpoint would need to dynamically encode the incoming post's content and append the resulting embedding and `post_id` to the existing arrays in the `search_index` singleton.

@@ -1,12 +1,15 @@
 
 import math
 import time
+import numpy as np
+from app.learned import predict, saved
 from typing import Any, Dict, List, Optional
 
 from app.db import repository
 from app.ranking import DEFAULT_WEIGHTS, compute_freshness, parse_timestamp, rank_feed
 from app.retrieval import get_top_k_results
 from app.search_index import search_index
+from fastapi import HTTPException
 
 
 def search_posts_by_meaning(query: str, limit: int, all_posts_db: List[Dict]) -> List[Dict]:
@@ -35,7 +38,6 @@ def search_posts_by_meaning(query: str, limit: int, all_posts_db: List[Dict]) ->
 
 class UserNotFoundError(Exception):
     """."""
-
 
 def build_user_feed(
     user_id: int,
@@ -77,8 +79,62 @@ def build_user_feed(
         for p in raw_candidates
     ]
 
+    # STRATEGIA 1: Rețeaua Neuronală (Learned)
+    if strategy == "learned":
+        if not saved:
+            raise HTTPException(status_code=503, detail="Learned model not available")
+            
+        DAY = 86400
+        n_features = 6
+        features = np.zeros((len(candidates), n_features))
+        
+        half_life_days = float(saved.get("half_life_days", 3 * 365))
+        activity_cap = float(saved.get("activity_cap", 500))
+        age_cap_days = float(saved.get("age_cap_days", 25 * 365))
+        
+        user_likes_count = len(liked_post_ids)
+        activity_signal = min(1.0, np.log1p(user_likes_count) / np.log1p(activity_cap))
+        
+        max_lifetime = max(like_counts.values()) if like_counts else 1
+        
+        for i, c in enumerate(candidates):
+            pid = c["post_id"]
+            author_id = c["user_id"]
+            created_ts = parse_timestamp(c["created_at"])
+            age_days = max(0.0, (now - created_ts) / DAY)
+            
+            # 1. freshness
+            freshness = 0.5 ** (age_days / half_life_days)
+            # 2. affinity
+            follow_boost = 1.0 if author_id in followed_ids else 0.0
+            prior_like_boost = 0.5 * math.log1p(author_likes.get(author_id, 0))
+            affinity = follow_boost + prior_like_boost
+            # 3. popularity
+            popularity = math.log1p(like_counts.get(pid, 0))
+            # 4. activity
+            activity = activity_signal
+            # 5. lifetime
+            lifetime = np.log1p(like_counts.get(pid, 0)) / np.log1p(max_lifetime)
+            # 6. age
+            age = min(1.0, age_days / age_cap_days)
+            
+            features[i] = [freshness, affinity, popularity, activity, lifetime, age]
+        
+        scores = predict(features)
+        
+        for i, c in enumerate(candidates):
+            c["score"] = float(scores[i])
+            
+        ranked = sorted(candidates, key=lambda x: (-x["score"], x["post_id"]))[:limit]
+        
+        return {
+            "user_id": user_id,
+            "strategy": strategy,
+            "results": ranked,
+        }
+
+    # STRATEGIA 2: Cronologic
     if strategy == "chronological":
-       
         ordered = sorted(
             candidates,
             key=lambda c: (-parse_timestamp(c["created_at"]), c["post_id"]),
@@ -89,7 +145,7 @@ def build_user_feed(
             "results": ordered[:limit],
         }
 
-    
+    # STRATEGIA 3: For You (Manual)
     signals: Dict[int, Dict[str, float]] = {}
     for c in candidates:
         pid = c["post_id"]

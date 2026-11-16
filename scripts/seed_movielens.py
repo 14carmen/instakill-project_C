@@ -1,71 +1,82 @@
+"""Seed InstaKill with MovieLens latest-small, written directly into SQLite.
+
+Same proxy as the Week 5 notebook, so the learned model sees the data it was trained on:
+
+| MovieLens                                  | InstaKill                         |
+|--------------------------------------------|-----------------------------------|
+| movie (only movies somebody rated)         | post, id = movieId                |
+| the first time anybody rated the movie     | post.created_at (unix seconds)    |
+| the movie's genres                         | post.genres ("Comedy|Drama")      |
+| user                                       | user, id = userId                 |
+| a rating of 4 or more                      | a like, created_at = its timestamp |
+
+All posts belong to one catalogue account (CATALOGUE_USER_ID). The script replaces the
+contents of the database, so it is deterministic: run it twice, get the same tables.
+
+Usage:  python scripts/seed_movielens.py path/to/ml-latest-small.zip
+"""
+import csv
+import io
 import sys
 import zipfile
-import csv
-import httpx
+from typing import Dict, List, Tuple
 
-MAX_USERS = 200
-MAX_POSTS = 2000
-API_URL = "http://127.0.0.1:9999"
+from app.db.database import get_connection, init_db
 
-def seed_database(zip_path: str):
-    print(f"Reading MovieLens data from {zip_path}...")
-    
-    with httpx.Client(timeout=None) as client:
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            movies_filename = next(name for name in z.namelist() if name.endswith('movies.csv'))
-            ratings_filename = next(name for name in z.namelist() if name.endswith('ratings.csv'))
+LIKE_THRESHOLD = 4.0
+CATALOGUE_USER_ID = 1_000_000          # outside MovieLens' user ids (1..610)
+CATALOGUE_USERNAME = "movielens_catalogue"
+NO_GENRES = "(no genres listed)"
 
-            posts_added = 0
-            valid_movie_ids = set()
-            with z.open(movies_filename) as f:
-                reader = csv.DictReader(f.read().decode('utf-8').splitlines())
-                for row in reader:
-                    if posts_added >= MAX_POSTS:
-                        break
-                    movie_id = int(row['movieId'])
-                    title = row['title']
-                    
-                    client.post(f"{API_URL}/posts", json={"user_id": 9999, "content": title})
-                    valid_movie_ids.add(movie_id)
-                    posts_added += 1
 
-            print(f"Added {posts_added} movies as posts.")
+def _read_csv(archive: zipfile.ZipFile, suffix: str) -> List[Dict[str, str]]:
+    name = next(n for n in archive.namelist() if n.endswith(suffix))
+    with archive.open(name) as f:
+        return list(csv.DictReader(io.TextIOWrapper(f, encoding="utf-8", newline="")))
 
-            users_added = set()
-            likes_added = 0
-            
-            with z.open(ratings_filename) as f:
-                reader = csv.DictReader(f.read().decode('utf-8').splitlines())
-                for row in reader:
-                    user_id = int(row['userId'])
-                    movie_id = int(row['movieId'])
-                    rating = float(row['rating'])
-                    timestamp = float(row['timestamp'])
 
-                    if len(users_added) >= MAX_USERS and user_id not in users_added:
-                        continue
+def load_movielens(zip_path: str) -> Tuple[list, list, list]:
+    """Returns (users, posts, likes) rows ready for INSERT."""
+    with zipfile.ZipFile(zip_path) as archive:
+        movies = {int(r["movieId"]): (r["title"], r["genres"]) for r in _read_csv(archive, "movies.csv")}
+        ratings = _read_csv(archive, "ratings.csv")
 
-                    if user_id not in users_added:
-                        client.post(f"{API_URL}/users", json={"username": f"ML_User_{user_id}"})
-                        users_added.add(user_id)
+    first_seen: Dict[int, int] = {}
+    user_ids = set()
+    likes = []
+    for r in ratings:
+        user_id, movie_id, ts = int(r["userId"]), int(r["movieId"]), int(r["timestamp"])
+        first_seen[movie_id] = min(ts, first_seen.get(movie_id, ts))      # every rating counts, not only likes
+        user_ids.add(user_id)
+        if float(r["rating"]) >= LIKE_THRESHOLD:
+            likes.append((user_id, movie_id, ts))
 
-                    if rating >= 4.0 and movie_id in valid_movie_ids:
-                        client.post(
-                            f"{API_URL}/likes", 
-                            json={
-                                "user_id": user_id, 
-                                "post_id": movie_id, 
-                                "created_at": timestamp
-                            }
-                        )
-                        likes_added += 1
+    users = [(CATALOGUE_USER_ID, CATALOGUE_USERNAME)] + [(u, f"ML_User_{u}") for u in sorted(user_ids)]
+    posts = []
+    for movie_id in sorted(first_seen):
+        title, genres = movies.get(movie_id, ("?", ""))
+        clean_genres = "|".join(g for g in genres.split("|") if g and g != NO_GENRES)
+        posts.append((movie_id, CATALOGUE_USER_ID, title, first_seen[movie_id], clean_genres))
+    likes.sort(key=lambda like: (like[2], like[0], like[1]))
+    return users, posts, likes
 
-            print(f"Added {len(users_added)} users and {likes_added} likes.")
-            print("Seeding complete! Data is deterministic and bounded.")
+
+def seed(zip_path: str) -> Dict[str, int]:
+    users, posts, likes = load_movielens(zip_path)
+    init_db()
+    with get_connection() as conn:
+        for table in ('"like"', "follow", "post", "user"):
+            conn.execute(f"DELETE FROM {table}")
+        conn.executemany("INSERT INTO user (id, username) VALUES (?, ?)", users)
+        conn.executemany("INSERT INTO post (id, user_id, content, created_at, genres) VALUES (?, ?, ?, ?, ?)", posts)
+        conn.executemany('INSERT INTO "like" (user_id, post_id, created_at) VALUES (?, ?, ?)', likes)
+    counts = {"users": len(users), "posts": len(posts), "likes": len(likes)}
+    print(f"Seeded {counts['users']:,} users (incl. the catalogue account), {counts['posts']:,} posts, {counts['likes']:,} likes.")
+    return counts
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python seed_movielens.py <path_to_ml-latest-small.zip>")
+    if len(sys.argv) != 2:
+        print("Usage: python scripts/seed_movielens.py <path_to_ml-latest-small.zip>")
         sys.exit(1)
-    
-    seed_database(sys.argv[1])
+    seed(sys.argv[1])

@@ -3,3 +3,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 venv/
+.venv/
+*.egg-info/
+
+# MovieLens is not redistributed: download it from GroupLens (see README)
+ml-latest-small.zip
+ml-latest-small/
+*.parquet
+.ipynb_checkpoints/
+*.bak
+*.bak

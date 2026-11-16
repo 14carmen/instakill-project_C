@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.db import repository
 from app.db.database import init_db
 from app.search_index import search_index
-from app.service import UserNotFoundError, build_user_feed, search_posts_by_meaning
+from app.service import ModelUnavailableError, UserNotFoundError, build_user_feed, search_posts_by_meaning
 
 class UserCreate(BaseModel):
     username: str
@@ -67,11 +67,16 @@ def get_feed(
     strategy: Literal["for_you", "chronological", "learned"] = Query(
         "for_you", description="Ranking strategy: for_you, chronological, or learned"
     ),
+    as_of: Optional[float] = Query(
+        None, ge=0, description="Optional unix time: replay the feed as it was then (default: now)"
+    ),
 ):
     try:
-        return build_user_feed(user_id=user_id, limit=limit, strategy=strategy)
+        return build_user_feed(user_id=user_id, limit=limit, strategy=strategy, now=as_of)
     except UserNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 

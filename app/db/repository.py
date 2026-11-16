@@ -1,5 +1,7 @@
-"""Repository layer for database reads."""
-from typing import Dict, List, Set
+"""Repository layer: every SQL statement of InstaKill lives here."""
+import time
+from typing import Dict, List, Set, Tuple
+
 from app.db.database import get_connection
 
 
@@ -12,7 +14,7 @@ def user_exists(user_id: int) -> bool:
 def get_all_posts() -> List[Dict]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, user_id, content, created_at FROM post"
+            "SELECT id, user_id, content, created_at, genres FROM post"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -55,7 +57,12 @@ def get_author_like_affinity(user_id: int) -> Dict[int, int]:
         ).fetchall()
         return {r["author_id"]: r["cnt"] for r in rows}
 
-import time
+
+def get_all_likes() -> List[Tuple[int, int, str]]:
+    """Every like as (user_id, post_id, created_at). The learned feed needs like times for its signals."""
+    with get_connection() as conn:
+        rows = conn.execute('SELECT user_id, post_id, created_at FROM "like"').fetchall()
+        return [(r["user_id"], r["post_id"], r["created_at"]) for r in rows]
 
 
 def create_user(username: str) -> Dict:
@@ -97,7 +104,7 @@ def create_post(user_id: int, content: str) -> Dict:
 
 def get_post(post_id: int) -> Dict | None:
     with get_connection() as conn:
-        row = conn.execute("SELECT id, user_id, content, created_at FROM post WHERE id = ?", (post_id,)).fetchone()
+        row = conn.execute("SELECT id, user_id, content, created_at, genres FROM post WHERE id = ?", (post_id,)).fetchone()
         return dict(row) if row else None
 
 def update_post(post_id: int, content: str) -> Dict | None:

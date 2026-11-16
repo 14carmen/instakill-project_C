@@ -1,19 +1,20 @@
-
+"""Application service: feed building and semantic search. No HTTP here; main.py maps errors to status codes."""
 import math
 import time
-import numpy as np
-from app.learned import predict, saved
-from typing import Any, Dict, List, Optional
+from collections import Counter
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
+
+from app import learned
 from app.db import repository
 from app.ranking import DEFAULT_WEIGHTS, compute_freshness, parse_timestamp, rank_feed
 from app.retrieval import get_top_k_results
 from app.search_index import search_index
-from fastapi import HTTPException
+from app.signals import SignalConfig, compute_features, genre_matrix
 
 
 def search_posts_by_meaning(query: str, limit: int, all_posts_db: List[Dict]) -> List[Dict]:
-  
     if not search_index.is_ready or not all_posts_db:
         return []
 
@@ -37,7 +38,45 @@ def search_posts_by_meaning(query: str, limit: int, all_posts_db: List[Dict]) ->
 
 
 class UserNotFoundError(Exception):
-    """."""
+    """The feed was requested for a user that does not exist."""
+
+
+class ModelUnavailableError(Exception):
+    """strategy=learned was requested but like_model.npz is not loaded."""
+
+
+Like = Tuple[int, int, float]          # (user_id, post_id, unix seconds)
+
+
+def learned_features(
+    user_id: int,
+    posts: Sequence[Dict[str, Any]],
+    likes: Sequence[Like],
+    candidate_ids: Sequence[int],
+    now: float,
+    config: SignalConfig,
+) -> np.ndarray:
+    """The six notebook signals for `candidate_ids`, as a (C, 6) array. `likes` must all be before `now`."""
+    index = {p["id"]: i for i, p in enumerate(posts)}
+    created_ts = np.array([parse_timestamp(p["created_at"]) for p in posts], dtype=float)
+    genres = genre_matrix(p.get("genres", "") for p in posts)
+
+    known = [like for like in likes if like[1] in index]                # a like on a deleted post is ignored
+    like_post_idx = np.array([index[post_id] for _, post_id, _ in known], dtype=int)
+    like_ts = np.array([ts for _, _, ts in known], dtype=float)
+    user_like_mask = np.array([u == user_id for u, _, _ in known], dtype=bool)
+
+    return compute_features(
+        now=now,
+        created_ts=created_ts,
+        genres=genres,
+        like_post_idx=like_post_idx,
+        like_ts=like_ts,
+        user_like_mask=user_like_mask,
+        candidate_idx=np.array([index[pid] for pid in candidate_ids], dtype=int),
+        config=config,
+    )
+
 
 def build_user_feed(
     user_id: int,
@@ -45,18 +84,28 @@ def build_user_feed(
     strategy: str = "for_you",
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
-    
+    """`now` defaults to the current time. A past `now` replays the feed as it was then:
+    only posts created and likes given before `now` are seen."""
     if not repository.user_exists(user_id):
         raise UserNotFoundError(f"User {user_id} not found")
+    if strategy == "learned" and not learned.is_available():
+        raise ModelUnavailableError("Learned model not available")
 
     if now is None:
         now = time.time()
 
-    all_posts = repository.get_all_posts()
+    all_posts = [p for p in repository.get_all_posts() if parse_timestamp(p["created_at"]) < now]
+    likes: List[Like] = [
+        (u, pid, ts) for u, pid, ts in
+        ((u, pid, parse_timestamp(created)) for u, pid, created in repository.get_all_likes())
+        if ts < now
+    ]
+    author_of = {p["id"]: p["user_id"] for p in all_posts}
+
     followed_ids = repository.get_followed_ids(user_id)
-    liked_post_ids = repository.get_liked_post_ids(user_id)
-    like_counts = repository.get_post_like_counts()
-    author_likes = repository.get_author_like_affinity(user_id)
+    liked_post_ids = {pid for u, pid, _ in likes if u == user_id}
+    like_counts = Counter(pid for _, pid, _ in likes)
+    author_likes = Counter(author_of[pid] for pid in liked_post_ids if pid in author_of)
 
     eligible_posts = [
         p for p in all_posts
@@ -79,61 +128,24 @@ def build_user_feed(
         for p in raw_candidates
     ]
 
-    # STRATEGIA 1: Rețeaua Neuronală (Learned)
+    # Strategy: learned (the Week 5 network)
     if strategy == "learned":
-        if not saved:
-            raise HTTPException(status_code=503, detail="Learned model not available")
-            
-        DAY = 86400
-        n_features = 6
-        features = np.zeros((len(candidates), n_features))
-        
-        half_life_days = float(saved.get("half_life_days", 3 * 365))
-        activity_cap = float(saved.get("activity_cap", 500))
-        age_cap_days = float(saved.get("age_cap_days", 25 * 365))
-        
-        user_likes_count = len(liked_post_ids)
-        activity_signal = min(1.0, np.log1p(user_likes_count) / np.log1p(activity_cap))
-        
-        max_lifetime = max(like_counts.values()) if like_counts else 1
-        
-        for i, c in enumerate(candidates):
-            pid = c["post_id"]
-            author_id = c["user_id"]
-            created_ts = parse_timestamp(c["created_at"])
-            age_days = max(0.0, (now - created_ts) / DAY)
-            
-            # 1. freshness
-            freshness = 0.5 ** (age_days / half_life_days)
-            # 2. affinity
-            follow_boost = 1.0 if author_id in followed_ids else 0.0
-            prior_like_boost = 0.5 * math.log1p(author_likes.get(author_id, 0))
-            affinity = follow_boost + prior_like_boost
-            # 3. popularity
-            popularity = math.log1p(like_counts.get(pid, 0))
-            # 4. activity
-            activity = activity_signal
-            # 5. lifetime
-            lifetime = np.log1p(like_counts.get(pid, 0)) / np.log1p(max_lifetime)
-            # 6. age
-            age = min(1.0, age_days / age_cap_days)
-            
-            features[i] = [freshness, affinity, popularity, activity, lifetime, age]
-        
-        scores = predict(features)
-        
-        for i, c in enumerate(candidates):
-            c["score"] = float(scores[i])
-            
-        ranked = sorted(candidates, key=lambda x: (-x["score"], x["post_id"]))[:limit]
-        
+        if not candidates:
+            return {"user_id": user_id, "strategy": strategy, "results": []}
+        features = learned_features(
+            user_id, all_posts, likes, [c["post_id"] for c in candidates], now,
+            SignalConfig.from_saved(learned.saved),
+        )
+        scores = learned.predict(features)
+        post_ids = np.array([c["post_id"] for c in candidates])
+        order = np.lexsort((post_ids, -scores))[:limit]                  # best score first, ties by ascending post_id
         return {
             "user_id": user_id,
             "strategy": strategy,
-            "results": ranked,
+            "results": [{**candidates[i], "score": round(float(scores[i]), 6)} for i in order],
         }
 
-    # STRATEGIA 2: Cronologic
+    # Strategy: chronological
     if strategy == "chronological":
         ordered = sorted(
             candidates,
@@ -145,7 +157,7 @@ def build_user_feed(
             "results": ordered[:limit],
         }
 
-    # STRATEGIA 3: For You (Manual)
+    # Strategy: for_you (Week 4 hand-tuned formula)
     signals: Dict[int, Dict[str, float]] = {}
     for c in candidates:
         pid = c["post_id"]

@@ -1,6 +1,10 @@
 """Tests for Week 4 feed ranking and GET /feed endpoint."""
 import copy
+
+import pytest
 from fastapi.testclient import TestClient
+
+import app.db.database as database
 
 from app.main import app
 from app.ranking import rank_feed
@@ -64,7 +68,13 @@ def test_rank_feed_does_not_mutate_inputs():
     assert weights == weights_copy
 
 
-def test_feed_api_over_seeded_db():
+@pytest.fixture
+def temp_db(tmp_path, monkeypatch):
+    """Seed a throw-away database, so running the tests never overwrites instakill.db."""
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+
+
+def test_feed_api_over_seeded_db(temp_db):
     seed()
     client = TestClient(app)
 

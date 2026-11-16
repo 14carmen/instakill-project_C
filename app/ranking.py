@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 import heapq
 import math
 from typing import Any, Dict, List
-from datetime import datetime, timezone
 
 DEFAULT_WEIGHTS: Dict[str, float] = {
     "freshness": 2.0,
@@ -10,25 +9,21 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
     "popularity": 1.0,
 }
 
-""""
-def parse_timestamp(ts: str) -> float:
-    
-    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp()
-"""
 
 def parse_timestamp(ts) -> float:
+    """Unix seconds from a number, a numeric string ("964982703") or an ISO date ("2026-10-25 10:00:00").
+
+    A date without a time zone is UTC: that is what SQLite's datetime('now') writes.
+    """
     if isinstance(ts, (float, int)):
         return float(ts)
-    
     try:
         return float(ts)
     except ValueError:
         pass
-        
     dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
 
 

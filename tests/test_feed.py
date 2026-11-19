@@ -102,5 +102,6 @@ def test_feed_api_over_seeded_db(temp_db):
     assert resp_404.status_code == 404
 
     # 4. Test limit în afara intervalului -> 422 Client Error
-    resp_bad = client.get("/feed?user_id=1&limit=100")
+    resp_bad = client.get("/feed?user_id=1&limit=351")       # the maximum is 350
     assert resp_bad.status_code == 422
+    assert client.get("/feed?user_id=1&limit=0").status_code == 422

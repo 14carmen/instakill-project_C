@@ -38,7 +38,7 @@ Returns a ranked feed of posts for a given user.
 
 ### Query Parameters
 - `user_id` (integer, required): ID of the user requesting the feed.
-- `limit` (integer, optional, default `20`, range `1..50`): Maximum number of posts to return.
+- `limit` (integer, optional, default `20`, range `1..350`): Maximum number of posts to return.
 - `strategy` (string, optional, default `"for_you"`):
   - `"chronological"`: newest first, no score;
   - `"for_you"`: the Week 4 hand-tuned formula `2.0·freshness + 1.5·affinity + 1.0·popularity`;

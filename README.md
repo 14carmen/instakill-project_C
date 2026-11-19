@@ -102,3 +102,14 @@ It writes three reports to `reports/`:
 
 The working database is never modified (the script evaluates a copy). The CSV and the table are byte-identical for the same database and arguments. To reproduce the committed table: commit the code first, then run the script and commit `reports/`. The table records the last commit that changed `app/`, `scripts/` or `pyproject.toml`, which committing the reports does not change.
 
+## Web interface
+
+Start the API (`uvicorn app.main:app --reload --port 9999`) and open <http://localhost:9999/>. The page is one static file, `app/static/index.html`, served by FastAPI at `/` and calling the same API as everybody else (same origin, so no CORS). It is not part of the API: it does not appear in `/docs`.
+
+- **Pick a user**: type a name or an id in *Switch user* (the last one is remembered).
+- **Compare strategies**: *For you*, *Learned* and *Newest* re-rank the same feed. Each post moves to its new place and shows its rank in the previous strategy ("was #6").
+- **Show the feed as it was on**: replays the feed at a past date (`as_of`). With MovieLens data, 4 February 2016 is the evaluation cut-off. Likes are paused in this mode, because a like given today does not exist on that date.
+- **Like** (with *Undo*), **follow** an author, **search** by meaning, **publish** a post, **create** an account.
+
+Fonts load from Google Fonts. Offline, the page falls back to the system font.
+

@@ -1,8 +1,10 @@
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path as FilePath
 from typing import Literal, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, Query, Path
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.db import repository
@@ -43,6 +45,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+STATIC_DIR = FilePath(__file__).parent / "static"
+MAX_FEED_LIMIT = 350                 # the longest feed one request may ask for
+
+
+@app.get("/", include_in_schema=False)
+def web_ui():
+    """The browser interface: one static page that calls the API below (same origin, no CORS)."""
+    return FileResponse(STATIC_DIR / "index.html")
+
 
 @app.get("/health")
 def health_check():
@@ -63,7 +74,7 @@ def semantic_search(
 @app.get("/feed")
 def get_feed(
     user_id: int = Query(..., description="User ID requesting the feed"),
-    limit: int = Query(20, ge=1, le=50, description="Max posts to return (1..50)"),
+    limit: int = Query(20, ge=1, le=MAX_FEED_LIMIT, description=f"Max posts to return (1..{MAX_FEED_LIMIT})"),
     strategy: Literal["for_you", "chronological", "learned"] = Query(
         "for_you", description="Ranking strategy: for_you, chronological, or learned"
     ),

@@ -11,7 +11,7 @@ figure{margin:1.6rem 0} figcaption{font-weight:600;margin-bottom:.4rem} img{max-
 </style></head><body>
 <h1>InstaKill offline evaluation</h1>
 <p class="sub">On our own data, which feed strategy puts the posts a user is going to like into their top 10, by how much, for which users, and how sure are we?</p>
-<h2>Run</h2><ul><li>cut-off T: 2016-02-04T21:34:53Z (unix 1454621693)</li><li>seed: 42 (2000 bootstrap resamples over users)</li><li>users evaluated: 25 (&gt;= 3 likes before T, &gt;= 1 like after T on a snapshot post); relevant likes: 469</li><li>snapshot: 7816 posts, 38864 likes; removed at or after T: 1908 posts, 9716 likes, 0 follows</li><li>database fingerprint (sha256 of the rows): 3d50d23fe8b95ab1</li><li>code: git commit be091e3</li><li>relevant likes in the Week 5 lab&#x27;s periods: train 0, validation 82, test 387</li></ul>
+<h2>Run</h2><ul><li>cut-off T: 2016-02-04T21:34:53Z (unix 1454621693)</li><li>seed: 42 (2000 bootstrap resamples over users)</li><li>users evaluated: 25 (&gt;= 3 likes before T, &gt;= 1 like after T on a snapshot post); relevant likes: 469</li><li>snapshot: 7816 posts, 38864 likes; removed at or after T: 1908 posts, 9716 likes, 0 follows</li><li>database fingerprint (sha256 of the rows): 3d50d23fe8b95ab1</li><li>code: git commit 9821e03</li><li>relevant likes in the Week 5 lab&#x27;s periods: train 0, validation 82, test 387</li></ul>
 <h2>Mean NDCG@10 per strategy (95 % bootstrap interval over users)</h2>
 <table>
 <tr><th>strategy</th><th>mean NDCG@10</th><th>95 % interval</th><th>users</th></tr>

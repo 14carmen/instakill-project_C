@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]
+eval = ["matplotlib>=3.8", "pandas>=2.0"]      # scripts/evaluate.py only; the API runs without them
 
 [build-system]
 requires = ["setuptools>=68"]

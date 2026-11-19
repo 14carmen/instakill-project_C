@@ -84,3 +84,21 @@ MovieLens likes stop in 2018, so at today's date every movie is "old" (age cappe
 ### Cost
 One request loads the posts and likes, builds the signals in `O(P·G + L + C)` (P posts, G = 19 genres, L likes, C candidates) and runs the network in `O(C·6·H)` with H = 32. On the full MovieLens seed this takes about 150 ms on a laptop, dominated by reading and parsing the rows; the forward pass itself takes about 8 ms for 10k candidates (notebook timing). In production the per-post counters (likes ever, likes in the last year) and the per-user genre counts would be maintained on write instead of recomputed per request.
 
+## Week 7 — Offline evaluation (`scripts/evaluate.py`)
+
+Which feed strategy puts the posts a user is going to like into their top 10, by how much, for which users, and how sure are we? `scripts/evaluate.py` replays the database at a cut-off time `T`, asks `chronological`, `for_you` and `learned` through `app.service.build_user_feed` (the function `GET /feed` calls) with `now = T`, adds a `popularity` scorer that exists only in the script, and scores NDCG@10 against the likes each user gave after `T`, with 95 % paired bootstrap intervals over users. The protocol and its limitations are in [`docs/evaluation-protocol.md`](docs/evaluation-protocol.md).
+
+```bash
+pip install -e ".[dev,eval]"                              # matplotlib + pandas: evaluation only, not needed by the API
+python scripts/seed_movielens.py ml-latest-small.zip
+python scripts/evaluate.py [--db instakill.db] [--cutoff 2016-02-04T21:34:53] [--seed 42] [--out reports/]
+```
+
+It writes three reports to `reports/`:
+
+- `eval_results.csv`: one row per user and strategy;
+- `baseline_table.md`: the four strategies with intervals, `learned` minus the best baseline overall and per slice, and the run metadata;
+- `dashboard.html`: a static page, opened with a double click, with the table and three charts.
+
+The working database is never modified (the script evaluates a copy). The CSV and the table are byte-identical for the same database and arguments. To reproduce the committed table: commit the code first, then run the script and commit `reports/`. The table records the last commit that changed `app/`, `scripts/` or `pyproject.toml`, which committing the reports does not change.
+
